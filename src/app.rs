@@ -40,6 +40,7 @@ pub struct App {
     pub sessions: Vec<TmuxSession>,
     pub tree_lines: Vec<TreeLine>,
     pub selected_index: usize,
+    pub scroll_offset: usize,
     pub numeric_buffer: String,
     pub numeric_buffer_timeout: Option<std::time::Instant>,
     pub error_message: Option<String>,
@@ -104,6 +105,7 @@ impl App {
             sessions: Vec::new(),
             tree_lines: Vec::new(),
             selected_index: 0,
+            scroll_offset: 0,
             numeric_buffer: String::new(),
             numeric_buffer_timeout: None,
             error_message: None,
@@ -294,6 +296,24 @@ impl App {
 
         // If no windows at all, stay at 0
         self.selected_index = 0;
+    }
+
+    pub fn update_scroll_offset(&mut self, viewport_height: usize) {
+        if self.tree_lines.is_empty() || viewport_height == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let viewport_height = viewport_height.saturating_sub(1); // Account for borders/padding
+        
+        // If selected item is above the current viewport, scroll up
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        }
+        // If selected item is below the current viewport, scroll down
+        else if self.selected_index >= self.scroll_offset + viewport_height {
+            self.scroll_offset = self.selected_index.saturating_sub(viewport_height.saturating_sub(1));
+        }
     }
 
     pub fn check_numeric_buffer_timeout(&mut self) {

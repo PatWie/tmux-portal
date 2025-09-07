@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::ui::confirm::render_confirmation_prompt;
@@ -34,7 +34,7 @@ fn get_mode_style(mode: &Mode, colors: &ColorConfig) -> Style {
     }
 }
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     match app.mode {
         Mode::Search => {
             draw_search_interface(f, app);
@@ -50,6 +50,9 @@ pub fn draw(f: &mut Frame, app: &App) {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(0), Constraint::Length(1)])
                 .split(f.area());
+
+            // Update scroll offset based on current viewport size
+            app.update_scroll_offset(chunks[0].height as usize);
 
             draw_main_content(f, app, chunks[0]);
             draw_status_bar(f, app, chunks[1]);
@@ -68,7 +71,13 @@ fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
     // Always use 3 characters for line numbers
     let line_number_width = 3;
 
-    for (i, tree_line) in app.tree_lines.iter().enumerate() {
+    // Calculate the visible range based on scroll offset
+    let viewport_height = area.height as usize;
+    let start_idx = app.scroll_offset;
+    let end_idx = (start_idx + viewport_height).min(app.tree_lines.len());
+
+    for i in start_idx..end_idx {
+        let tree_line = &app.tree_lines[i];
         let is_selected = i == app.selected_index;
 
         let (line_number_str, line_number_style) = if tree_line.line_type == LineType::Window {
@@ -133,10 +142,14 @@ fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
         items.push(ListItem::new(Line::from(content_spans)).style(style));
     }
 
-    let list =
-        List::new(items).highlight_style(app.config.colors.list_highlight.to_ratatui_style());
+    let list = List::new(items);
 
-    f.render_widget(list, area);
+    let mut list_state = ListState::default();
+    if app.selected_index >= start_idx && app.selected_index < end_idx {
+        list_state.select(Some(app.selected_index - start_idx));
+    }
+
+    f.render_stateful_widget(list, area, &mut list_state);
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
