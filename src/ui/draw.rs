@@ -65,11 +65,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
-    let line_numbers = app.get_window_line_numbers();
     let mut items = Vec::new();
-
-    // Always use 3 characters for line numbers
-    let line_number_width = 3;
 
     // Calculate the visible range based on scroll offset
     let viewport_height = area.height as usize;
@@ -80,45 +76,26 @@ fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
         let tree_line = &app.tree_lines[i];
         let is_selected = i == app.selected_index;
 
-        let (line_number_str, line_number_style) = if tree_line.line_type == LineType::Window {
-            if let Some(&relative_num) = line_numbers.get(&i) {
-                if relative_num == 0 {
-                    let padding = " ".repeat(app.config.line_numbers.padding);
-                    (
-                        format!("{:<width$}{}", "0", padding, width = line_number_width),
-                        app.config
-                            .line_numbers
-                            .current_line_color
-                            .to_ratatui_style(),
-                    )
-                } else {
-                    let padding = " ".repeat(app.config.line_numbers.padding);
-                    (
-                        format!(
-                            "{:>width$}{}",
-                            relative_num.abs(),
-                            padding,
-                            width = line_number_width
-                        ),
-                        app.config.line_numbers.other_lines_color.to_ratatui_style(),
-                    )
-                }
-            } else {
-                let total_width = line_number_width + app.config.line_numbers.padding;
-                (" ".repeat(total_width), Style::default())
-            }
+        // Check if this window is in history
+        let shortcut = if let Some(window) = &tree_line.window {
+            app.history
+                .iter()
+                .position(|(s, w)| s == &window.session_name && w == &window.id)
+                .and_then(|pos| {
+                    if pos < 9 {
+                        Some(format!("{} ", pos + 1))
+                    } else if pos == 9 {
+                        Some("0 ".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "  ".to_string())
         } else {
-            let total_width = line_number_width + app.config.line_numbers.padding;
-            (" ".repeat(total_width), Style::default())
+            "  ".to_string()
         };
 
-        // Use the content as-is since it already contains tree drawing characters
-        let display_content = tree_line.content.clone();
-
-        let content_spans = vec![
-            Span::styled(line_number_str, line_number_style),
-            Span::raw(display_content),
-        ];
+        let display_content = format!("{}{}", shortcut, tree_line.content);
 
         let style = match tree_line.line_type {
             LineType::Session => {
@@ -139,7 +116,7 @@ fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
             }
         };
 
-        items.push(ListItem::new(Line::from(content_spans)).style(style));
+        items.push(ListItem::new(display_content).style(style));
     }
 
     let list = List::new(items);
@@ -172,22 +149,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     // Help text (center) - using our new help panel widget
     render_help_panel(app, status_chunks[1], f.buffer_mut());
-
-    // Numeric buffer display
-    if !app.numeric_buffer.is_empty() {
-        let numeric_text = Paragraph::new(format!(" [{}]", app.numeric_buffer))
-            .style(app.config.colors.numeric_buffer.to_ratatui_style());
-
-        // Create a small area at the right side of the help panel for the numeric buffer
-        let numeric_area = Rect {
-            x: status_chunks[1].x + status_chunks[1].width - 10,
-            y: status_chunks[1].y,
-            width: 10,
-            height: 1,
-        };
-
-        f.render_widget(numeric_text, numeric_area);
-    }
 
     // Error message or session count (right)
     let right_content = if let Some(error) = &app.error_message {

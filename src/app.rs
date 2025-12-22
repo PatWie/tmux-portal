@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 use text_trees::{FormatCharacters, StringTreeNode, TreeFormatting};
 
-use crate::config::{Config, load_config};
+use crate::config::{Config, get_history_path, load_config};
 use crate::search::{SearchPattern, SearchProvider, SearchResult};
 use crate::tmux::{
     TmuxSession, TmuxWindow, delete_window, get_current_session_name, get_tmux_sessions,
@@ -41,8 +41,6 @@ pub struct App {
     pub tree_lines: Vec<TreeLine>,
     pub selected_index: usize,
     pub scroll_offset: usize,
-    pub numeric_buffer: String,
-    pub numeric_buffer_timeout: Option<std::time::Instant>,
     pub error_message: Option<String>,
     pub show_popup: bool,
     pub popup_input: String,
@@ -56,6 +54,8 @@ pub struct App {
     pub quick_search_query: String,
     pub quick_search_results: Vec<usize>, // Indices into tree_lines that match
     pub quick_search_selected_index: usize,
+    // History tracking for digit shortcuts
+    pub history: Vec<(String, String)>, // (session_name, window_id)
 }
 
 impl App {
@@ -106,8 +106,6 @@ impl App {
             tree_lines: Vec::new(),
             selected_index: 0,
             scroll_offset: 0,
-            numeric_buffer: String::new(),
-            numeric_buffer_timeout: None,
             error_message: None,
             show_popup: false,
             popup_input: String::new(),
@@ -120,6 +118,7 @@ impl App {
             quick_search_query: String::new(),
             quick_search_results: Vec::new(),
             quick_search_selected_index: 0,
+            history: Self::load_history().unwrap_or_default(),
         };
 
         app.refresh_sessions()?;
@@ -316,20 +315,8 @@ impl App {
         }
     }
 
-    pub fn check_numeric_buffer_timeout(&mut self) {
-        if let Some(timeout) = self.numeric_buffer_timeout {
-            if timeout.elapsed() > std::time::Duration::from_secs(2) {
-                self.numeric_buffer.clear();
-                self.numeric_buffer_timeout = None;
-            }
-        }
-    }
-
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         self.error_message = None;
-
-        // Check for numeric buffer timeout before processing input
-        self.check_numeric_buffer_timeout();
 
         match self.mode {
             Mode::Window => self.handle_normal_mode(key),
@@ -376,32 +363,18 @@ impl App {
             KeyCode::Char('J') => self.move_item_down()?,
             KeyCode::Char('K') => self.move_item_up()?,
             KeyCode::Char('C') => self.create_new_window()?,
-            KeyCode::Char(c) if c.is_ascii_digit() => {
-                self.numeric_buffer.push(c);
-                self.numeric_buffer_timeout = Some(std::time::Instant::now());
-            }
+            // Digit shortcuts for history navigation
+            KeyCode::Char('1') => return self.jump_to_history(0),
+            KeyCode::Char('2') => return self.jump_to_history(1),
+            KeyCode::Char('3') => return self.jump_to_history(2),
+            KeyCode::Char('4') => return self.jump_to_history(3),
+            KeyCode::Char('5') => return self.jump_to_history(4),
+            KeyCode::Char('6') => return self.jump_to_history(5),
+            KeyCode::Char('7') => return self.jump_to_history(6),
+            KeyCode::Char('8') => return self.jump_to_history(7),
+            KeyCode::Char('9') => return self.jump_to_history(8),
+            KeyCode::Char('0') => return self.jump_to_history(9),
             _ => {}
-        }
-
-        // Handle numeric prefixes for movement
-        if !self.numeric_buffer.is_empty() && matches!(key.code, KeyCode::Char('j' | 'k')) {
-            if let Ok(count) = self.numeric_buffer.parse::<usize>() {
-                match key.code {
-                    KeyCode::Char('j') => {
-                        for _ in 1..count {
-                            self.move_down();
-                        }
-                    }
-                    KeyCode::Char('k') => {
-                        for _ in 1..count {
-                            self.move_up();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            self.numeric_buffer.clear();
-            self.numeric_buffer_timeout = None;
         }
 
         Ok(false)
@@ -683,7 +656,13 @@ impl App {
     fn activate_selected(&mut self) -> Result<bool> {
         if let Some(line) = self.tree_lines.get(self.selected_index) {
             if let Some(window) = &line.window {
-                match switch_to_window(&window.session_name, &window.id) {
+                let session_name = window.session_name.clone();
+                let window_id = window.id.clone();
+                
+                // Add to history before switching
+                self.add_to_history(&session_name, &window_id);
+                
+                match switch_to_window(&session_name, &window_id) {
                     Ok(_) => return Ok(true), // Exit the app after successful switch
                     Err(e) => {
                         self.error_message = Some(format!("Failed to switch: {e}"));
@@ -1340,6 +1319,51 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn add_to_history(&mut self, session_name: &str, window_id: &str) {
+        let entry = (session_name.to_string(), window_id.to_string());
+        
+        // Remove if already exists
+        self.history.retain(|h| h != &entry);
+        
+        // Add to front
+        self.history.insert(0, entry);
+        
+        // Keep only last 10
+        self.history.truncate(10);
+        
+        // Save to disk
+        let _ = Self::save_history(&self.history);
+    }
+
+    fn load_history() -> Result<Vec<(String, String)>> {
+        let path = get_history_path()?;
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = std::fs::read_to_string(path)?;
+        let history = serde_json::from_str(&content)?;
+        Ok(history)
+    }
+
+    fn save_history(history: &[(String, String)]) -> Result<()> {
+        let path = get_history_path()?;
+        let content = serde_json::to_string(history)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    fn jump_to_history(&mut self, index: usize) -> Result<bool> {
+        if let Some((session_name, window_id)) = self.history.get(index).cloned() {
+            match switch_to_window(&session_name, &window_id) {
+                Ok(_) => return Ok(true),
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to switch: {e}"));
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn handle_delete_confirm_mode(&mut self, key: KeyEvent) -> Result<bool> {
