@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 use text_trees::{FormatCharacters, StringTreeNode, TreeFormatting};
 
-use crate::config::{Config, get_history_path, load_config};
+use crate::config::{Config, get_history_path, get_pins_path, load_config};
 use crate::search::{SearchPattern, SearchProvider, SearchResult};
 use crate::tmux::{
     TmuxSession, TmuxWindow, delete_window, get_current_session_name, get_tmux_sessions,
@@ -56,6 +56,8 @@ pub struct App {
     pub quick_search_selected_index: usize,
     // History tracking for digit shortcuts
     pub history: Vec<(String, String)>, // (session_name, window_id)
+    // Harpoon-style pins: slot 1-9 -> (session_name, window_id)
+    pub pins: HashMap<u8, (String, String)>,
 }
 
 impl App {
@@ -119,6 +121,7 @@ impl App {
             quick_search_results: Vec::new(),
             quick_search_selected_index: 0,
             history: Self::load_history().unwrap_or_default(),
+            pins: Self::load_pins().unwrap_or_default(),
         };
 
         app.refresh_sessions()?;
@@ -363,17 +366,26 @@ impl App {
             KeyCode::Char('J') => self.move_item_down()?,
             KeyCode::Char('K') => self.move_item_up()?,
             KeyCode::Char('C') => self.create_new_window()?,
-            // Digit shortcuts for history navigation
-            KeyCode::Char('1') => return self.jump_to_history(0),
-            KeyCode::Char('2') => return self.jump_to_history(1),
-            KeyCode::Char('3') => return self.jump_to_history(2),
-            KeyCode::Char('4') => return self.jump_to_history(3),
-            KeyCode::Char('5') => return self.jump_to_history(4),
-            KeyCode::Char('6') => return self.jump_to_history(5),
-            KeyCode::Char('7') => return self.jump_to_history(6),
-            KeyCode::Char('8') => return self.jump_to_history(7),
-            KeyCode::Char('9') => return self.jump_to_history(8),
-            KeyCode::Char('0') => return self.jump_to_history(9),
+            // Digit shortcuts for pin navigation
+            KeyCode::Char('1') => return self.jump_to_pin(1),
+            KeyCode::Char('2') => return self.jump_to_pin(2),
+            KeyCode::Char('3') => return self.jump_to_pin(3),
+            KeyCode::Char('4') => return self.jump_to_pin(4),
+            KeyCode::Char('5') => return self.jump_to_pin(5),
+            KeyCode::Char('6') => return self.jump_to_pin(6),
+            KeyCode::Char('7') => return self.jump_to_pin(7),
+            KeyCode::Char('8') => return self.jump_to_pin(8),
+            KeyCode::Char('9') => return self.jump_to_pin(9),
+            // Shift+number to toggle pins
+            KeyCode::Char('!') => { self.toggle_pin(1); }
+            KeyCode::Char('@') => { self.toggle_pin(2); }
+            KeyCode::Char('#') => { self.toggle_pin(3); }
+            KeyCode::Char('$') => { self.toggle_pin(4); }
+            KeyCode::Char('%') => { self.toggle_pin(5); }
+            KeyCode::Char('^') => { self.toggle_pin(6); }
+            KeyCode::Char('&') => { self.toggle_pin(7); }
+            KeyCode::Char('*') => { self.toggle_pin(8); }
+            KeyCode::Char('(') => { self.toggle_pin(9); }
             _ => {}
         }
 
@@ -1354,8 +1366,41 @@ impl App {
         Ok(())
     }
 
-    fn jump_to_history(&mut self, index: usize) -> Result<bool> {
-        if let Some((session_name, window_id)) = self.history.get(index).cloned() {
+    fn load_pins() -> Result<HashMap<u8, (String, String)>> {
+        let path = get_pins_path()?;
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let content = std::fs::read_to_string(path)?;
+        let pins = serde_json::from_str(&content)?;
+        Ok(pins)
+    }
+
+    fn save_pins(&self) -> Result<()> {
+        let path = get_pins_path()?;
+        let content = serde_json::to_string(&self.pins)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    fn toggle_pin(&mut self, slot: u8) {
+        let Some(line) = self.tree_lines.get(self.selected_index) else { return };
+        let Some(window) = &line.window else { return };
+
+        let entry = (window.session_name.clone(), window.id.clone());
+
+        // If this window already has this slot, remove it
+        if self.pins.get(&slot) == Some(&entry) {
+            self.pins.remove(&slot);
+        } else {
+            // Remove this slot from any other window, then assign
+            self.pins.insert(slot, entry);
+        }
+        let _ = self.save_pins();
+    }
+
+    fn jump_to_pin(&mut self, slot: u8) -> Result<bool> {
+        if let Some((session_name, window_id)) = self.pins.get(&slot).cloned() {
             match switch_to_window(&session_name, &window_id) {
                 Ok(_) => return Ok(true),
                 Err(e) => {

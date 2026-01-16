@@ -76,20 +76,12 @@ fn draw_main_content(f: &mut Frame, app: &App, area: Rect) {
         let tree_line = &app.tree_lines[i];
         let is_selected = i == app.selected_index;
 
-        // Check if this window is in history
+        // Check if this window has a pin
         let shortcut = if let Some(window) = &tree_line.window {
-            app.history
+            app.pins
                 .iter()
-                .position(|(s, w)| s == &window.session_name && w == &window.id)
-                .and_then(|pos| {
-                    if pos < 9 {
-                        Some(format!("{} ", pos + 1))
-                    } else if pos == 9 {
-                        Some("0 ".to_string())
-                    } else {
-                        None
-                    }
-                })
+                .find(|(_, (s, w))| s == &window.session_name && w == &window.id)
+                .map(|(slot, _)| format!("{} ", slot))
                 .unwrap_or_else(|| "  ".to_string())
         } else {
             "  ".to_string()

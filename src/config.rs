@@ -499,6 +499,18 @@ pub fn get_history_path() -> Result<PathBuf> {
     Ok(tmux_portal_config_dir.join("history.json"))
 }
 
+pub fn get_pins_path() -> Result<PathBuf> {
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
+
+    let tmux_portal_config_dir = config_dir.join("tmux_portal");
+    if !tmux_portal_config_dir.exists() {
+        fs::create_dir_all(&tmux_portal_config_dir)?;
+    }
+
+    Ok(tmux_portal_config_dir.join("pins.json"))
+}
+
 // Check if the loaded config has all fields from the default config
 // This is a simple check to determine if we need to write back the config
 fn has_all_fields(config: &Config, default_config: &Config) -> bool {
