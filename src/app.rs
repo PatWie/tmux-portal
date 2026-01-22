@@ -1392,10 +1392,16 @@ impl App {
         // If this window already has this slot, remove it
         if self.pins.get(&slot) == Some(&entry) {
             self.pins.remove(&slot);
-        } else {
-            // Remove this slot from any other window, then assign
-            self.pins.insert(slot, entry);
+            let _ = self.save_pins();
+            return;
         }
+
+        // Can only assign/steal if current window has no pin
+        if self.pins.values().any(|v| v == &entry) {
+            return;
+        }
+
+        self.pins.insert(slot, entry);
         let _ = self.save_pins();
     }
 
